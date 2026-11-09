@@ -43,22 +43,48 @@ class Enlace:
     def __init__(self, linha_serial):
         self.linha_serial = linha_serial
         self.linha_serial.registrar_recebedor(self.__raw_recv)
+        self.buffer = bytearray()
 
     def registrar_recebedor(self, callback):
         self.callback = callback
 
     def enviar(self, datagrama):
-        # TODO: Preencha aqui com o código para enviar o datagrama pela linha
-        # serial, fazendo corretamente a delimitação de quadros e o escape de
-        # sequências especiais, de acordo com o protocolo CamadaEnlace (RFC 1055).
-        pass
+        # Passo 1 e Passo 2:
+        # 1. Substituir 0xDB por 0xDB 0xDD primeiro para não corromper sub-sequências.
+        # 2. Substituir 0xC0 por 0xDB 0xDC nos dados.
+        dados_tratados = datagrama.replace(b'\xdb', b'\xdb\xdd')
+        dados_tratados = dados_tratados.replace(b'\xc0', b'\xdb\xdc')
+
+        # Insere o delimitador 0xC0 no início e no fim do quadro (Passo 1)
+        quadro = b'\xc0' + dados_tratados + b'\xc0'
+
+        self.linha_serial.enviar(quadro)
 
     def __raw_recv(self, dados):
-        # TODO: Preencha aqui com o código para receber dados da linha serial.
-        # Trate corretamente as sequências de escape. Quando ler um quadro
-        # completo, repasse o datagrama contido nesse quadro para a camada
-        # superior chamando self.callback. Cuidado pois o argumento dados pode
-        # vir quebrado de várias formas diferentes - por exemplo, podem vir
-        # apenas pedaços de um quadro, ou um pedaço de quadro seguido de um
-        # pedaço de outro, ou vários quadros de uma vez só.
-        pass
+        # Passo 3: Acumula os bytes recebidos no buffer de retenção
+        self.buffer.extend(dados)
+
+        # Processa enquanto houver delimitadores 0xC0 (fim de quadro) no buffer
+        while b'\xc0' in self.buffer:
+            # Retira o primeiro quadro completo até o 0xC0
+            quadro_bruto, self.buffer = self.buffer.split(b'\xc0', 1)
+
+            # Descarta datagramas vazios (gerados por 0xC0 no início ou consecutivos)
+            if not quadro_bruto:
+                continue
+
+            # Passo 4: Desfaz as sequências de escape na ordem inversa
+            datagrama = quadro_bruto.replace(b'\xdb\xdc', b'\xc0')
+            datagrama = datagrama.replace(b'\xdb\xdd', b'\xdb')
+
+            # Passo 5: Trata exceções no callback para evitar lixo residual
+            try:
+                if self.callback:
+                    self.callback(datagrama)
+            except Exception:
+                import traceback
+                traceback.print_exc()
+            finally:
+                # O split() já removeu o quadro atual de self.buffer,
+                # garantindo a limpeza completa caso o callback lance um erro.
+                pass
