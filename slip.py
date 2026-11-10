@@ -13,7 +13,7 @@ class CamadaEnlace:
         """
         self.enlaces = {}
         self.callback = None
-        # Constrói um Enlace para cada linha serial
+        #Constrói um Enlace para cada linha serial
         for ip_outra_ponta, linha_serial in linhas_seriais.items():
             enlace = Enlace(linha_serial)
             self.enlaces[ip_outra_ponta] = enlace
@@ -31,7 +31,7 @@ class CamadaEnlace:
         fornecido como string (no formato x.y.z.w). A camada de enlace se
         responsabilizará por encontrar em qual enlace se encontra o next_hop.
         """
-        # Encontra o Enlace capaz de alcançar next_hop e envia por ele
+        #Encontra o Enlace capaz de alcançar next_hop e envia por ele
         self.enlaces[next_hop].enviar(datagrama)
 
     def _callback(self, datagrama):
@@ -42,46 +42,46 @@ class CamadaEnlace:
 class Enlace:
     def __init__(self, linha_serial):
         self.linha_serial = linha_serial
-        self.callback = None                      # evita AttributeError se chegarem dados antes do registro
-        self.buffer = bytearray()                 # dados residuais (quadro ainda incompleto) - Passo 3
+        self.callback = None                      #evita AttributeError se chegarem dados antes do registro
+        self.buffer = bytearray()                 #dados residuais (quadro ainda incompleto) - Passo 3
         self.linha_serial.registrar_recebedor(self.__raw_recv)
 
     def registrar_recebedor(self, callback):
         self.callback = callback
 
-    # ======================= PASSOS 1 e 2: envio =======================
+    #Passos 1 e 2: envio 
     def enviar(self, datagrama):
-        # Passo 2: sequências de escape.
-        # O 0xDB deve ser escapado PRIMEIRO; se fosse o 0xC0 primeiro, o 0xDB
-        # inserido por ele seria escapado de novo e corromperia o quadro.
-        dados_tratados = datagrama.replace(b'\xdb', b'\xdb\xdd')   # 0xDB -> 0xDB 0xDD
-        dados_tratados = dados_tratados.replace(b'\xc0', b'\xdb\xdc')  # 0xC0 -> 0xDB 0xDC
+        #Passo 2: sequências de escape
+        #O 0xDB deve ser escapado PRIMEIRO; se fosse o 0xC0 primeiro, o 0xDB
+        #inserido por ele seria escapado de novo e corromperia o quadro
+        dados_tratados = datagrama.replace(b'\xdb', b'\xdb\xdd')   #0xDB -> 0xDB 0xDD
+        dados_tratados = dados_tratados.replace(b'\xc0', b'\xdb\xdc')  #0xC0 -> 0xDB 0xDC
 
-        # Passo 1: delimitador 0xC0 no início e no fim do quadro
+        #Passo 1: delimitador 0xC0 no início e no fim do quadro
         quadro = b'\xc0' + dados_tratados + b'\xc0'
         self.linha_serial.enviar(quadro)
 
-    # ======================= PASSOS 3, 4 e 5: recepção =======================
+    #Passos 3, 4 e 5: recepção 
     def __raw_recv(self, dados):
-        # Passo 3: os bytes podem chegar quebrados ou vários quadros de uma vez,
-        # então acumulamos tudo no buffer e só processamos quadros completos.
+        #Passo 3: os bytes podem chegar quebrados ou vários quadros de uma vez,
+        #então acumulamos tudo no buffer e só processamos quadros completos
         self.buffer.extend(dados)
 
-        # Cada 0xC0 no buffer marca o fim de um quadro
+        #Cada 0xC0 no buffer marca o fim de um quadro
         while b'\xc0' in self.buffer:
             quadro_bruto, self.buffer = self.buffer.split(b'\xc0', 1)
 
-            # Passo 3: não repassar datagramas vazios (0xC0 no início/fim do quadro)
+            #passo 3: não repassar datagramas vazios (0xC0 no início/fim do quadro)
             if not quadro_bruto:
                 continue
 
-            # Passo 4: desfaz as sequências de escape (ordem inversa do envio)
+            #passo 4: desfaz as sequências de escape (ordem inversa do envio)
             datagrama = bytes(quadro_bruto)
             datagrama = datagrama.replace(b'\xdb\xdc', b'\xc0')   # 0xDB 0xDC -> 0xC0
             datagrama = datagrama.replace(b'\xdb\xdd', b'\xdb')   # 0xDB 0xDD -> 0xDB
 
-            # Passo 5: se a camada superior lançar exceção, ignoramos o erro
-            # (mostrando na tela) para o datagrama mal formado não ficar no buffer.
+            #passo 5: se a camada superior lançar exceção, ignoramos o erro
+            #(mostrando na tela) para o datagrama mal formado não ficar no buffer
             try:
                 if self.callback:
                     self.callback(datagrama)
@@ -89,7 +89,7 @@ class Enlace:
                 import traceback
                 traceback.print_exc()
             finally:
-                # O split() já tirou o quadro atual de self.buffer, então não
-                # sobra nenhum pedaço dele aqui; o que resta no buffer é só o
-                # começo do PRÓXIMO quadro, que deve ser mantido.
+                #O split() já tirou o quadro atual de self.buffer, então não
+                #sobra nenhum pedaço dele aqui; o que resta no buffer é só o
+                #começo do PRÓXIMO quadro, que deve ser mantido
                 pass
