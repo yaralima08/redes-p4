@@ -1,7 +1,7 @@
 class CamadaEnlace:
     ignore_checksum = False
 
-    def __init__(self, linhas_seriais): 
+    def __init__(self, linhas_seriais):
         """
         Inicia uma camada de enlace com um ou mais enlaces, cada um conectado
         a uma linha serial distinta. O argumento linhas_seriais é um dicionário
@@ -42,42 +42,46 @@ class CamadaEnlace:
 class Enlace:
     def __init__(self, linha_serial):
         self.linha_serial = linha_serial
+        self.callback = None                      # evita AttributeError se chegarem dados antes do registro
+        self.buffer = bytearray()                 # dados residuais (quadro ainda incompleto) - Passo 3
         self.linha_serial.registrar_recebedor(self.__raw_recv)
-        self.buffer = bytearray()
 
     def registrar_recebedor(self, callback):
         self.callback = callback
 
+    # ======================= PASSOS 1 e 2: envio =======================
     def enviar(self, datagrama):
-        # Passo 1 e Passo 2:
-        # 1. Substituir 0xDB por 0xDB 0xDD primeiro para não corromper sub-sequências.
-        # 2. Substituir 0xC0 por 0xDB 0xDC nos dados.
-        dados_tratados = datagrama.replace(b'\xdb', b'\xdb\xdd')
-        dados_tratados = dados_tratados.replace(b'\xc0', b'\xdb\xdc')
+        # Passo 2: sequências de escape.
+        # O 0xDB deve ser escapado PRIMEIRO; se fosse o 0xC0 primeiro, o 0xDB
+        # inserido por ele seria escapado de novo e corromperia o quadro.
+        dados_tratados = datagrama.replace(b'\xdb', b'\xdb\xdd')   # 0xDB -> 0xDB 0xDD
+        dados_tratados = dados_tratados.replace(b'\xc0', b'\xdb\xdc')  # 0xC0 -> 0xDB 0xDC
 
-        # Insere o delimitador 0xC0 no início e no fim do quadro (Passo 1)
+        # Passo 1: delimitador 0xC0 no início e no fim do quadro
         quadro = b'\xc0' + dados_tratados + b'\xc0'
-
         self.linha_serial.enviar(quadro)
 
+    # ======================= PASSOS 3, 4 e 5: recepção =======================
     def __raw_recv(self, dados):
-        # Passo 3: Acumula os bytes recebidos no buffer de retenção
+        # Passo 3: os bytes podem chegar quebrados ou vários quadros de uma vez,
+        # então acumulamos tudo no buffer e só processamos quadros completos.
         self.buffer.extend(dados)
 
-        # Processa enquanto houver delimitadores 0xC0 (fim de quadro) no buffer
+        # Cada 0xC0 no buffer marca o fim de um quadro
         while b'\xc0' in self.buffer:
-            # Retira o primeiro quadro completo até o 0xC0
             quadro_bruto, self.buffer = self.buffer.split(b'\xc0', 1)
 
-            # Descarta datagramas vazios (gerados por 0xC0 no início ou consecutivos)
+            # Passo 3: não repassar datagramas vazios (0xC0 no início/fim do quadro)
             if not quadro_bruto:
                 continue
 
-            # Passo 4: Desfaz as sequências de escape na ordem inversa
-            datagrama = quadro_bruto.replace(b'\xdb\xdc', b'\xc0')
-            datagrama = datagrama.replace(b'\xdb\xdd', b'\xdb')
+            # Passo 4: desfaz as sequências de escape (ordem inversa do envio)
+            datagrama = bytes(quadro_bruto)
+            datagrama = datagrama.replace(b'\xdb\xdc', b'\xc0')   # 0xDB 0xDC -> 0xC0
+            datagrama = datagrama.replace(b'\xdb\xdd', b'\xdb')   # 0xDB 0xDD -> 0xDB
 
-            # Passo 5: Trata exceções no callback para evitar lixo residual
+            # Passo 5: se a camada superior lançar exceção, ignoramos o erro
+            # (mostrando na tela) para o datagrama mal formado não ficar no buffer.
             try:
                 if self.callback:
                     self.callback(datagrama)
@@ -85,6 +89,7 @@ class Enlace:
                 import traceback
                 traceback.print_exc()
             finally:
-                # O split() já removeu o quadro atual de self.buffer,
-                # garantindo a limpeza completa caso o callback lance um erro.
+                # O split() já tirou o quadro atual de self.buffer, então não
+                # sobra nenhum pedaço dele aqui; o que resta no buffer é só o
+                # começo do PRÓXIMO quadro, que deve ser mantido.
                 pass
